@@ -38,13 +38,23 @@ def generate_isotropic_noise(num_lon: int, num_lat: int, num_samples=1, isotropi
     if isotropic:
         lmax = num_lat - 1 if extend else num_lat
         mmax = lmax + 1
-        coeffs = torch.randn(num_samples, lmax, mmax, dtype=torch.complex64) / np.sqrt(
-            (num_lat**2) // 2
-        )
+
+        # Generate random spherical harmonic coefficients
+        coeffs = torch.randn(num_samples, lmax, mmax, dtype=torch.complex64)
+
         isht = th.InverseRealSHT(
             nlat=num_lat, nlon=num_lon, lmax=lmax, mmax=mmax, grid="equiangular"
         )
-        noise = isht(coeffs) * np.sqrt(2 * np.pi)
+        noise = isht(coeffs)
+
+        # FIX: Match DeepMind's noise normalization: variance = 4π ≈ 12.57
+        # Previous OCF version had variance ≈ 0.9 (14x too weak!)
+        # torch_harmonics has different normalization than JAX, so we scale to target variance
+        target_variance = 4 * np.pi
+        current_std = noise.std().item()
+        target_std = np.sqrt(target_variance)
+        noise = noise * (target_std / current_std)
+
         noise = einops.rearrange(noise, "b lat lon -> lon lat b").numpy()
     else:
         noise = np.random.randn(num_lon, num_lat, num_samples)

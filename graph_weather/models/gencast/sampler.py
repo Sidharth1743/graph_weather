@@ -114,17 +114,20 @@ class Sampler:
                 d = (x - denoised) / sigma_hat
                 x = x + d * (sigmas[i + 1] - sigma_hat)
             else:
-                # DPMSolver++2S  step (Alg. 1 in Lu et al.) with alpha_t=1.
-                # t_{i-1} is t_hat because of stochastic churn!
-                lambda_hat = -torch.log(sigma_hat)
-                lambda_next = -torch.log(sigmas[i + 1])
-                h = lambda_next - lambda_hat
-                lambda_mid = lambda_hat + self.r * h
-                sigma_mid = torch.exp(-lambda_mid)
+                # DPMSolver++2S step - DeepMind's numerically stable direct ratio formulation
+                # Replaces log-space formulation to eliminate precision loss from exp(-r*h)-1
+                next_noise_level = sigmas[i + 1]
+                mid_noise_level = torch.sqrt(sigma_hat * next_noise_level)
 
-                u = sigma_mid / sigma_hat * x - (torch.exp(-self.r * h) - 1) * denoised
-                denoised_2 = denoiser(u, prev_inputs, sigma_mid * batch_ones)
-                D = (1 - 1 / (2 * self.r)) * denoised + 1 / (2 * self.r) * denoised_2
-                x = sigmas[i + 1] / sigma_hat * x - (torch.exp(-h) - 1) * D
+                # Midpoint calculation (convex combination)
+                mid_over_current = mid_noise_level / sigma_hat
+                x_mid = mid_over_current * x + (1 - mid_over_current) * denoised
+
+                # Second denoiser call at midpoint
+                denoised_mid = denoiser(x_mid, prev_inputs, mid_noise_level * batch_ones)
+
+                # Final update
+                next_over_current = next_noise_level / sigma_hat
+                x = next_over_current * x + (1 - next_over_current) * denoised_mid
 
         return x
